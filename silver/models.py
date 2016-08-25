@@ -1314,7 +1314,7 @@ class Subscription(models.Model):
         Returns the proration percent (how much of the interval will be billed)
         and the status (if the subscription is prorated or not).
 
-        :returns: a tuple containing (Decimal(percent), status) where status
+        :returns: a tuple containing (status, Decimal(percent)) where status
             can be one of [True, False]. The decimal value will from the
             interval [0.00; 1.00].
         :rtype: tuple
