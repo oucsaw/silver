@@ -20,6 +20,7 @@ from uuid import UUID
 
 from django.http.response import Http404
 from django.utils import timezone
+from django.conf import settings
 from rest_framework import generics, permissions, status, filters
 from rest_framework.generics import (get_object_or_404, ListCreateAPIView,
                                      RetrieveUpdateAPIView, ListAPIView,
@@ -147,6 +148,17 @@ class SubscriptionDetail(generics.RetrieveUpdateAPIView):
         return get_object_or_404(Subscription, customer__id=customer_pk,
                                  pk=subscription_pk)
 
+    def get_modifiable_fields(self):
+        # By default, no patching of subscriptions is allowed, apart
+        # from the 'meta' field. This adds an override to this, preserving
+        # the default behavior in the absence any override
+        try:
+            allowed_patch_fields = settings.SILVER_SUBSCRIPTION_API_PATCH_FIELDS
+        except AttributeError:
+            allowed_patch_fields = ['meta', 'default_setting']
+
+        return allowed_patch_fields
+
     def put(self, request, *args, **kwargs):
         return Response({'detail': 'Method "PUT" not allowed.'},
                         status=status.HTTP_405_METHOD_NOT_ALLOWED)
@@ -154,15 +166,22 @@ class SubscriptionDetail(generics.RetrieveUpdateAPIView):
     def patch(self, request, *args, **kwargs):
         sub = get_object_or_404(Subscription.objects,
                                 pk=self.kwargs.get('subscription_pk', None))
+        # Remove fields from the request data that we allow patching
+        # on (only 'meta' by default)
+        patch_data = {}
+        for field in self.get_modifiable_fields():
+            data = request.data.pop(field, None)
+            if data:
+                patch_data[field] = data
+        # deal with any remaining fields:
         state = sub.state
-        meta = request.data.pop('meta', None)
         if request.data:
             message = "Cannot update a subscription when it's in %s state." \
                       % state
             return Response({"detail": message},
                             status=status.HTTP_400_BAD_REQUEST)
         request.data.clear()
-        request.data.update({'meta': meta} if meta else {})
+        request.data.update(patch_data)
         return super(SubscriptionDetail, self).patch(request,
                                                      *args, **kwargs)
 

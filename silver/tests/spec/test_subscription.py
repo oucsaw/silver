@@ -25,6 +25,8 @@ from silver.tests.factories import (AdminUserFactory, CustomerFactory,
                                     PlanFactory, SubscriptionFactory,
                                     MeteredFeatureFactory)
 
+from django.test import override_settings
+
 
 class TestSubscriptionEndpoint(APITestCase):
     def setUp(self):
@@ -419,3 +421,208 @@ class TestSubscriptionEndpoint(APITestCase):
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert response.data == {field: ['This field is required.']}
+
+
+class TestSubscriptionPatch(APITestCase):
+    def setUp(self):
+        admin_user = AdminUserFactory.create()
+        self.client.force_authenticate(user=admin_user)
+
+# Firstly, we test the default behaviour ...
+
+    def test_can_patch_meta(self):
+        subscription = SubscriptionFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        subscription_data = response.data
+        subscription_data['meta'] = {'somethingelse': [2, 3],
+                                     'something': [0, 1]}
+
+        data = {
+            'meta': subscription_data['meta'],
+        }
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data == subscription_data
+
+    def test_cannot_patch_description(self):
+        subscription = SubscriptionFactory.create()
+        subscription.activate()
+        subscription.save()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        data = {'description': 'A description'}
+
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data == {
+            'detail': u"Cannot update a subscription when it's in active state."
+        }
+
+    def test_cannot_patch_customer(self):
+        subscription = SubscriptionFactory.create()
+        subscription.activate()
+        subscription.save()
+
+        customer = CustomerFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        data = {'customer': 'http://testserver/customer/%s/' % customer.pk}
+
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data == {
+            'detail': u"Cannot update a subscription when it's in active state."
+        }
+
+# Now, we change the settings to allow the patching of certian fields
+
+    @override_settings(SILVER_SUBSCRIPTION_API_PATCH_FIELDS=['meta', 'customer'])
+    def test_can_patch_meta_customer_not_description(self):
+        subscription = SubscriptionFactory.create()
+        subscription.activate()
+        subscription.save()
+
+        customer = CustomerFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        subscription_data = response.data
+        subscription_data['meta'] = {'somethingelse': [2, 3],
+                                     'something': [0, 1]}
+
+        data = {
+            'meta': subscription_data['meta'],
+        }
+
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data == subscription_data
+
+        subscription_data['customer'] = 'http://testserver/customers/%s/' % \
+            customer.pk
+        subscription_data['url'] = '%ssubscriptions/%s/' % \
+            (subscription_data['customer'], subscription_data['id'])
+
+        data = {
+            'customer': subscription_data['customer']
+        }
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data == subscription_data
+
+        data = {
+            'description': 'some description',
+        }
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data == {
+            'detail': u"Cannot update a subscription when it's in active state."
+        }
+
+    @override_settings(SILVER_SUBSCRIPTION_API_PATCH_FIELDS=['description'])
+    def test_can_patch_description_not_meta_customer(self):
+        subscription = SubscriptionFactory.create()
+        subscription.activate()
+        subscription.save()
+
+        customer = CustomerFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        subscription_data = response.data
+
+        subscription_data['description'] = 'some description'
+        data = {
+            'description': subscription_data['description']
+        }
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data == subscription_data
+
+        subscription_data['meta'] = {'somethingelse': [2, 3],
+                                     'something': [0, 1]
+        }
+        data = {
+            'meta': subscription_data['meta'],
+        }
+
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data == {
+            'detail': u"Cannot update a subscription when it's in active state."
+        }
+
+        subscription_data['customer'] = 'http://testserver/customers/%s/' % \
+            customer.pk
+        subscription_data['url'] = '%ssubscriptions/%s/' % \
+            (subscription_data['customer'], subscription_data['id'])
+
+        data = {
+            'customer': subscription_data['customer']
+        }
+        response = self.client.patch(
+            url, json.dumps(data), content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data == {
+            'detail': u"Cannot update a subscription when it's in active state."
+        }
