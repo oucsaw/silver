@@ -25,6 +25,8 @@ from silver.tests.factories import (AdminUserFactory, CustomerFactory,
                                     PlanFactory, SubscriptionFactory,
                                     MeteredFeatureFactory)
 
+from django.test import override_settings
+
 
 class TestSubscriptionEndpoint(APITestCase):
     def setUp(self):
@@ -419,3 +421,101 @@ class TestSubscriptionEndpoint(APITestCase):
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert response.data == {field: ['This field is required.']}
+
+
+class TestSubscriptionDelete(APITestCase):
+
+    def setUp(self):
+        admin_user = AdminUserFactory.create()
+        self.client.force_authenticate(user=admin_user)
+
+    # Default is no delete ....
+    def test_delete_not_allowed(self):
+        subscription = SubscriptionFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        # Check we have something to try to delete:
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        response = self.client.delete(url)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data != []
+
+    # Check delete is still not allowed, if setting is set to False
+    @override_settings(SILVER_SUBSCRIPTION_DELETION=False)
+    def test_cannot_delete_deletion_set_false(self):
+        subscription = SubscriptionFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        # Check we have something to try to delete:
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        response = self.client.delete(url)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data != []
+
+    # Check various cases when allowed to delete
+    @override_settings(SILVER_SUBSCRIPTION_DELETION=True)
+    def test_cannot_delete_deletion_set_true(self):
+
+        subscription = SubscriptionFactory.create()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        # Check we have something to try to delete:
+        response = self.client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data != []
+
+        # Delete without a reference is not allowed
+        response = self.client.delete(url)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data != []
+
+        # Delete without a matching reference is not allowed
+        # (N.B Default ref == None)
+        data = {'reference': 'this will not match'}
+        response = self.client.delete(url,
+                       json.dumps(data), content_type='application/json')
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data != []
+
+        # Delete with a matching reference is allowed
+        data = {'reference': subscription.reference}
+        response = self.client.delete(url,
+                       json.dumps(data), content_type='application/json')
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        # Delete with a matching reference (but empty) is allowed
+        # (N.B Default ref == None)
+        subscription = SubscriptionFactory.create()
+        subscription.reference = None
+        subscription.save()
+
+        url = reverse('subscription-detail',
+                      kwargs={'customer_pk': subscription.customer.pk,
+                              'subscription_pk': subscription.pk}
+        )
+
+        data = {'reference': ''}
+        response = self.client.delete(url,
+                       json.dumps(data), content_type='application/json')
+        assert response.status_code == status.HTTP_204_NO_CONTENT

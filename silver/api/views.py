@@ -20,6 +20,7 @@ from uuid import UUID
 
 from django.http.response import Http404
 from django.utils import timezone
+from django.conf import settings
 from rest_framework import generics, permissions, status, filters
 from rest_framework.generics import (get_object_or_404, ListCreateAPIView,
                                      RetrieveUpdateAPIView, ListAPIView,
@@ -137,7 +138,7 @@ class SubscriptionList(generics.ListCreateAPIView):
         return super(SubscriptionList, self).post(request, *args, **kwargs)
 
 
-class SubscriptionDetail(generics.RetrieveUpdateAPIView):
+class SubscriptionDetail(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = (permissions.IsAuthenticated,)
     serializer_class = SubscriptionDetailSerializer
 
@@ -164,6 +165,45 @@ class SubscriptionDetail(generics.RetrieveUpdateAPIView):
         request.data.clear()
         request.data.update({'meta': meta} if meta else {})
         return super(SubscriptionDetail, self).patch(request,
+                                                     *args, **kwargs)
+
+    def can_delete(self):
+        # By default, no API deletion is allowed
+        # We can set a flag (SILVER_SUBSCRIPTION_DETELTION) the Django Settings
+        # to allow this
+        try:
+            delete_allowed = settings.SILVER_SUBSCRIPTION_DELETION
+        except AttributeError:
+            delete_allowed = False
+
+        return delete_allowed
+
+    def delete(self, request, *args, **kwargs):
+        sub = get_object_or_404(Subscription.objects,
+                                pk=self.kwargs.get('subscription_pk', None))
+
+        if not self.can_delete():
+            message = "Cannot delete subscription"
+            return Response({"detail": message},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Try to stop casual errors
+        request_ref = None
+        if request.data:
+            request_ref = request.data.pop('reference', None)
+        if request_ref is None:
+            message = "Must provide reference in delete"
+            return Response({"detail": message},
+                            status=status.HTTP_400_BAD_REQUEST)
+        sub_reference = sub.reference
+        if sub_reference is None:
+            sub_reference = ''
+        if request_ref != sub_reference:
+            message = 'Reference does not match subscription (%s != %s)'
+            return Response({"detail": message % (request_ref, sub_reference)},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        return super(SubscriptionDetail, self).delete(request,
                                                      *args, **kwargs)
 
 
