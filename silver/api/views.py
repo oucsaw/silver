@@ -191,6 +191,8 @@ class SubscriptionDetail(generics.RetrieveUpdateDestroyAPIView):
         request_ref = None
         if request.data:
             request_ref = request.data.pop('reference', None)
+        elif request.query_params:
+            request_ref = request.query_params.get('reference', None)
         if request_ref is None:
             message = "Must provide reference in delete"
             return Response({"detail": message},
